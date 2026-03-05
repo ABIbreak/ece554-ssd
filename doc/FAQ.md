@@ -1,0 +1,7 @@
+- How will the host interact with the SSD?
+	- ACPI tables give the host a 256Mb region for all configuration headers and associated capabilities
+	- ACPI enumeration will grant the SSD its requested address space by writing it to {BAR1, BAR0}
+	- NVMe Controller Properties are located starting at 0x0 at the BAR
+	- The locations of the Admin SQ and CQs are written to the controller properties
+	- The locations of the IO SQ and CQs are written to the Admin SQ
+	- Doorbell registers start at 0x1000 of the BAR
