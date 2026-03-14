@@ -1,14 +1,14 @@
 // axil_dma_ctrl_tb.cpp
-// Verilator C++ testbench for axil_dma_ctrl.sv
+// Verilator C++ testbench for axil_dma_ctrl_core.sv
 //
 // Build and run:
 //   verilator --cc --exe --build -j0 \
-//     axil_dma_ctrl.sv \
+//     axil_dma_ctrl_core.sv \
 //     axil_dma_ctrl_tb.cpp
-//   ./obj_dir/Vaxil_dma_ctrl
+//   ./obj_dir/Vaxil_dma_ctrl_core
 
 #include "verilated.h"
-#include "Vaxil_dma_ctrl.h"
+#include "Vaxil_dma_ctrl_core.h"
 
 #include <cstdint>
 #include <iostream>
@@ -18,7 +18,7 @@
 // Globals
 // ----------------------------------------------------------------
 static VerilatedContext *ctx;
-static Vaxil_dma_ctrl  *dut;
+static Vaxil_dma_ctrl_core  *dut;
 static int pass_count = 0;
 static int fail_count = 0;
 
@@ -106,7 +106,7 @@ static uint64_t axil_read64(uint32_t addr_lo) {
 int main(int argc, char **argv) {
     ctx = new VerilatedContext;
     ctx->commandArgs(argc, argv);
-    dut = new Vaxil_dma_ctrl{ctx};
+    dut = new Vaxil_dma_ctrl_core{ctx};
 
     // Initialise all inputs
     dut->s_axil_aclk    = 0;
