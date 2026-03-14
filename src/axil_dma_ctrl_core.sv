@@ -1,6 +1,6 @@
 `default_nettype none
 
-// axil_dma_ctrl.sv
+// axil_dma_ctrl_core.sv
 //
 // AXI-Lite slave exposing three 64-bit DMA control registers.
 // All writes are expected to be full 32-bit (wstrb is present but ignored).
@@ -13,7 +13,7 @@
 //   0x10  len_lo        [31:0]  RW  lower 32 bits of transfer length
 //   0x14  len_hi        [31:0]  RW  upper 32 bits of transfer length
 
-module axil_dma_ctrl (
+module axil_dma_ctrl_core (
     // AXI-Lite slave
     input  logic        s_axil_aclk,
     input  logic        s_axil_aresetn,
