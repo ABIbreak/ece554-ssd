@@ -1,0 +1,38 @@
+Modules
+- NVMe interface
+    - nvme_controller_properties
+    - nvme_sq
+    - nvme_cq
+    - nvme_doorbell
+    - Interfaces: AXI, interrupt
+    - Testing: send AXI reads/writes and check the registers are being updated, interrupt is asserted if writing to a doorbell register
+- Flash Controller
+    - AXI-S interface
+        - axis_serializer
+        - axis_deserializer
+        - Interfaces: AXI-S, simple FIFO
+        - Testing: send AXI-S stream and check FIFO output matches; vice-versa for serialiser
+    - fifo
+    - lfsr
+    - Scrambler
+        - scrambler
+        - descrambler
+        - Interfaces: 8-bit vectors, N\*8-bit vector for LFSR seed
+        - Testing: check if signal sent through a scrambler then descrambler is still the same
+    - channel
+        - Interfaces:
+            - flash address
+            - polling address
+            - operation
+            - ready/#busy
+            - AXI (to write to address CPU is polling on)
+        - Testing: use a manufacturer provided behavioral model to run tests sending data through FIFO interface, retrieving that data and check if it works as expected
+    - channel_axi_lite_wrapper
+        - Interfaces: AXI-Lite, Channel's signals
+        - Testing: check AXI-Lite writes are converted into the same signals
+- Misc
+    - descriptor_bypass_wrapper
+        - Interaces: AXI-Lite, DMA Engine's descriptor bypass signals
+        - Testing: check AXI-Lite writes are converted into the same bypass signals
+
+TODO: convert into spreadsheet
