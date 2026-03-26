@@ -2,7 +2,6 @@
 	"nodes":[
 		{"id":"d19ef908dfb37d48","type":"group","x":-240,"y":300,"width":1230,"height":220,"label":"Flash Controller"},
 		{"id":"c9d859bf89b509d3","type":"group","x":-240,"y":-280,"width":360,"height":250,"label":"CSRs"},
-		{"id":"b84f4e661f61c05b","type":"text","text":"DDR4 MIG","x":720,"y":120,"width":250,"height":60},
 		{"id":"f0a34df8e9f3b6f3","type":"text","text":"MicroBlaze V","x":-1360,"y":-35,"width":250,"height":50},
 		{"id":"c46d8b8daf9cc61e","type":"text","text":"Peripheral Interconnect","x":-1110,"y":-222,"width":250,"height":60},
 		{"id":"08b9acd1ef11552d","type":"text","text":"AXI-Lite Wrapper","x":-660,"y":-460,"width":323,"height":60,"color":"5"},
@@ -11,12 +10,9 @@
 		{"id":"83a7ae1af5eea766","type":"text","text":"NVMe Submission/Completion Queues","x":-220,"y":-170,"width":340,"height":50,"color":"5"},
 		{"id":"5b637a16f8859edf","type":"text","text":"NVMe SQ/CQ Doorbell Registers","x":-220,"y":-100,"width":288,"height":50,"color":"5"},
 		{"id":"c6fbc0ad0b2a1767","type":"text","text":"NVMe Controller Properties","x":-220,"y":-250,"width":277,"height":50,"color":"5"},
-		{"id":"0bfc08a8d5d53338","type":"text","text":"Channel","x":720,"y":380,"width":250,"height":60,"color":"5"},
+		{"id":"b4c2539574d7b347","type":"text","text":"DMA Engine","x":-660,"y":120,"width":250,"height":60},
 		{"id":"448ec2090ecd01a6","type":"text","text":"Scrambler","x":400,"y":320,"width":250,"height":60,"color":"5"},
 		{"id":"c28f2f62af30c3b3","type":"text","text":"Descrambler","x":400,"y":440,"width":250,"height":60,"color":"5"},
-		{"id":"b4c2539574d7b347","type":"text","text":"DMA Engine","x":-660,"y":120,"width":250,"height":60},
-		{"id":"35422abec4a9628b","type":"text","text":"DRAM","x":1200,"y":120,"width":250,"height":60},
-		{"id":"3f257eef9d03a82a","type":"text","text":"Flash","x":1200,"y":380,"width":250,"height":60},
 		{"id":"4ebb63c3c7a4a9ac","type":"text","text":"FIFO","x":80,"y":320,"width":250,"height":60,"color":"5"},
 		{"id":"e60a709cd069c24f","type":"text","text":"FIFO","x":80,"y":440,"width":250,"height":60,"color":"5"},
 		{"id":"671788c5640a211f","type":"text","text":"Host","x":1200,"y":-95,"width":250,"height":60},
@@ -24,6 +20,10 @@
 		{"id":"ab2afeef291dc726","type":"text","text":"DDR4 AXI Interconnect","x":80,"y":120,"width":250,"height":60},
 		{"id":"4635fa31371341d2","type":"text","text":"AXI-S deserializer","x":-220,"y":320,"width":250,"height":60,"color":"5"},
 		{"id":"0c7ba7f6448b2281","type":"text","text":"AXI-S serializer","x":-220,"y":440,"width":250,"height":60,"color":"5"},
+		{"id":"b84f4e661f61c05b","type":"text","text":"DDR4 MIG","x":720,"y":120,"width":250,"height":60},
+		{"id":"0bfc08a8d5d53338","type":"text","text":"Channel","x":720,"y":380,"width":250,"height":60,"color":"5"},
+		{"id":"35422abec4a9628b","type":"text","text":"DRAM","x":1200,"y":120,"width":250,"height":60},
+		{"id":"3f257eef9d03a82a","type":"text","text":"Flash","x":1200,"y":380,"width":250,"height":60},
 		{"id":"3634dcb998f7061f","type":"text","text":"AXI-Lite Wrapper","x":-660,"y":600,"width":250,"height":50,"color":"5"}
 	],
 	"edges":[

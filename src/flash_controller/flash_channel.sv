@@ -1,5 +1,5 @@
 // ============================================================
-// nand_flash_ctrl.sv
+// flash_channel.sv
 // Flash Controller for MX30LF1G28AD (1Gb SLC NAND, x8)
 // ============================================================
 // Provides a simple internal register interface:
@@ -36,7 +36,7 @@
 // For erase, only 3 row address cycles are sent (no column).
 // ============================================================
 
-module nand_flash_ctrl #(
+module flash_channel #(
     parameter CLK_PERIOD_NS = 10,    // system clock period — used to count timing
     parameter PAGE_BYTES    = 2112,  // 2048 data + 64 OOB
     parameter COL_BITS      = 12,
