@@ -2,9 +2,9 @@
 //
 // AXI4-Lite VIP (PG267 v1.1) testbench for descriptor_bypass_wrapper.v
 //
-// The AXI VIP master component (axi_vip_mst_0) must be generated in the
+// The AXI VIP master component (axi_vip_0) must be generated in the
 // Vivado IP Catalog with the following settings:
-//   Component Name  : axi_vip_mst_0
+//   Component Name  : axi_vip_0
 //   PROTOCOL        : AXI4LITE
 //   INTERFACE_MODE  : MASTER
 //   ADDR_WIDTH      : 32
@@ -15,8 +15,8 @@
 //
 // Compile order (Vivado xvlog -sv):
 //   1. Xilinx simulation libraries (unisims_ver, axi_vip_v1_1_*)
-//   2. axi_vip_mst_0_pkg.sv           -- generated component package
-//   3. axi_vip_mst_0.sv               -- generated component wrapper
+//   2. axi_vip_0_pkg.sv           -- generated component package
+//   3. axi_vip_0.sv               -- generated component wrapper
 //   4. descriptor_bypass_wrapper_core.sv
 //   5. descriptor_bypass_wrapper.v
 //   6. descriptor_bypass_wrapper_tb.sv (this file)
@@ -29,7 +29,7 @@
 module descriptor_bypass_wrapper_tb;
 
     import axi_vip_pkg::*;
-    import axi_vip_mst_0_pkg::*;
+    import axi_vip_0_pkg::*;
 
     // ----------------------------------------------------------------
     // Clock and reset
@@ -86,7 +86,7 @@ module descriptor_bypass_wrapper_tb;
     // ----------------------------------------------------------------
     // AXI VIP master instance
     // ----------------------------------------------------------------
-    axi_vip_mst_0 u_vip_mst (
+    axi_vip_0 u_vip_mst (
         .aclk           (aclk),
         .aresetn        (aresetn),
         .m_axi_awaddr   (axil_awaddr),
@@ -157,7 +157,7 @@ module descriptor_bypass_wrapper_tb;
     //   typedef: <component_name>_mst_t
     //   hierarchy path: <tb>.<vip_instance>.inst.IF
     // ----------------------------------------------------------------
-    axi_vip_mst_0_mst_t mst_agent;
+    axi_vip_0_mst_t mst_agent;
 
     // ----------------------------------------------------------------
     // Test counters
