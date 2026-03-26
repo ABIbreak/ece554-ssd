@@ -2,7 +2,7 @@
 
 // axil_dma_ctrl_core.sv
 //
-// AXI-Lite slave exposing three 64-bit DMA control registers.
+// AXI-Lite slave exposing DMA control registers.
 // All writes are expected to be full 32-bit (wstrb is present but ignored).
 //
 // Register map (byte addresses):
@@ -12,6 +12,10 @@
 //   0x0C  card_addr_hi  [31:0]  RW  upper 32 bits of card address
 //   0x10  len_lo        [31:0]  RW  lower 32 bits of transfer length
 //   0x14  len_hi        [31:0]  RW  upper 32 bits of transfer length
+//   0x18  ctrl          [31:0]
+//           [0]  ready   RW   1 = DMA engine idle, 0 = busy
+//           [1]  c2h     RW   1 = card-to-host, 0 = host-to-card
+//           [2]  go      RW   1 = start transfer
 
 module axil_dma_ctrl_core (
     // AXI-Lite slave
@@ -41,7 +45,8 @@ module axil_dma_ctrl_core (
     input  logic        s_axil_rready
 );
 
-    // Register outputs
+    // Register storage
+    logic        ready, c2h, go;
     logic [63:0] host_addr;
     logic [63:0] card_addr;
     logic [63:0] len;
@@ -76,6 +81,9 @@ module axil_dma_ctrl_core (
             host_addr      <= '0;
             card_addr      <= '0;
             len            <= '0;
+            ready          <= 1'b1;
+            c2h            <= 1'b0;
+            go             <= 1'b0;
 
         end else begin
 
@@ -99,6 +107,11 @@ module axil_dma_ctrl_core (
                     3'h3: card_addr[63:32] <= wr_data;
                     3'h4: len[31:0]        <= wr_data;
                     3'h5: len[63:32]       <= wr_data;
+                    3'h6: begin
+                        ready <= wr_data[0];
+                        c2h   <= wr_data[1];
+                        go    <= wr_data[2];
+                    end
                     default: ;
                 endcase
 
@@ -141,6 +154,7 @@ module axil_dma_ctrl_core (
                     3'h3: s_axil_rdata <= card_addr[63:32];
                     3'h4: s_axil_rdata <= len[31:0];
                     3'h5: s_axil_rdata <= len[63:32];
+                    3'h6: s_axil_rdata <= {29'b0, go, c2h, ready};
                     default: s_axil_rdata <= '0;
                 endcase
             end

@@ -91,14 +91,17 @@ module descriptor_bypass_wrapper_core (
     logic        w_done;
     logic [7:0]  wr_addr_lat;
     logic [31:0] wr_data_lat;
+    logic [3:0]  wr_strb_lat;
 
     // Resolved write operands (combinational)
     logic [7:0]  wr_addr;
     logic [31:0] wr_data;
+    logic [3:0]  wr_strb;
     logic        wr_fire;   // both AW and W received this cycle or prior
 
     assign wr_addr  = aw_done ? wr_addr_lat : s_axil_awaddr[7:0];
     assign wr_data  = w_done  ? wr_data_lat : s_axil_wdata;
+    assign wr_strb  = w_done  ? wr_strb_lat : s_axil_wstrb;
     assign wr_fire  = (aw_done || (s_axil_awvalid && s_axil_awready)) &&
                       (w_done  || (s_axil_wvalid  && s_axil_wready));
 
@@ -112,6 +115,7 @@ module descriptor_bypass_wrapper_core (
             w_done                <= 1'b0;
             wr_addr_lat           <= '0;
             wr_data_lat           <= '0;
+            wr_strb_lat           <= '0;
 
             h2c_dsc_byp_src_addr  <= '0;
             h2c_dsc_byp_dst_addr  <= '0;
@@ -138,9 +142,10 @@ module descriptor_bypass_wrapper_core (
                 s_axil_awready <= 1'b0;
             end
 
-            // Latch write data
+            // Latch write data and strobe
             if (s_axil_wvalid && s_axil_wready) begin
                 wr_data_lat   <= s_axil_wdata;
+                wr_strb_lat   <= s_axil_wstrb;
                 w_done        <= 1'b1;
                 s_axil_wready <= 1'b0;
             end
@@ -149,23 +154,79 @@ module descriptor_bypass_wrapper_core (
             if (wr_fire) begin
                 case (wr_addr[7:2])
                     // H2C registers (base 0x00)
-                    6'h00: h2c_dsc_byp_src_addr[31:0]  <= wr_data;
-                    6'h01: h2c_dsc_byp_src_addr[63:32] <= wr_data;
-                    6'h02: h2c_dsc_byp_dst_addr[31:0]  <= wr_data;
-                    6'h03: h2c_dsc_byp_dst_addr[63:32] <= wr_data;
-                    6'h04: h2c_dsc_byp_len             <= wr_data[27:0];
-                    6'h05: h2c_dsc_byp_ctl             <= wr_data[15:0];
-                    6'h06: if (wr_data[0]) h2c_go_pending <= 1'b1;  // GO
+                    6'h00: begin
+                        if (wr_strb[0]) h2c_dsc_byp_src_addr[7:0]   <= wr_data[7:0];
+                        if (wr_strb[1]) h2c_dsc_byp_src_addr[15:8]  <= wr_data[15:8];
+                        if (wr_strb[2]) h2c_dsc_byp_src_addr[23:16] <= wr_data[23:16];
+                        if (wr_strb[3]) h2c_dsc_byp_src_addr[31:24] <= wr_data[31:24];
+                    end
+                    6'h01: begin
+                        if (wr_strb[0]) h2c_dsc_byp_src_addr[39:32] <= wr_data[7:0];
+                        if (wr_strb[1]) h2c_dsc_byp_src_addr[47:40] <= wr_data[15:8];
+                        if (wr_strb[2]) h2c_dsc_byp_src_addr[55:48] <= wr_data[23:16];
+                        if (wr_strb[3]) h2c_dsc_byp_src_addr[63:56] <= wr_data[31:24];
+                    end
+                    6'h02: begin
+                        if (wr_strb[0]) h2c_dsc_byp_dst_addr[7:0]   <= wr_data[7:0];
+                        if (wr_strb[1]) h2c_dsc_byp_dst_addr[15:8]  <= wr_data[15:8];
+                        if (wr_strb[2]) h2c_dsc_byp_dst_addr[23:16] <= wr_data[23:16];
+                        if (wr_strb[3]) h2c_dsc_byp_dst_addr[31:24] <= wr_data[31:24];
+                    end
+                    6'h03: begin
+                        if (wr_strb[0]) h2c_dsc_byp_dst_addr[39:32] <= wr_data[7:0];
+                        if (wr_strb[1]) h2c_dsc_byp_dst_addr[47:40] <= wr_data[15:8];
+                        if (wr_strb[2]) h2c_dsc_byp_dst_addr[55:48] <= wr_data[23:16];
+                        if (wr_strb[3]) h2c_dsc_byp_dst_addr[63:56] <= wr_data[31:24];
+                    end
+                    6'h04: begin
+                        if (wr_strb[0]) h2c_dsc_byp_len[7:0]   <= wr_data[7:0];
+                        if (wr_strb[1]) h2c_dsc_byp_len[15:8]  <= wr_data[15:8];
+                        if (wr_strb[2]) h2c_dsc_byp_len[23:16] <= wr_data[23:16];
+                        if (wr_strb[3]) h2c_dsc_byp_len[27:24] <= wr_data[27:24];
+                    end
+                    6'h05: begin
+                        if (wr_strb[0]) h2c_dsc_byp_ctl[7:0]  <= wr_data[7:0];
+                        if (wr_strb[1]) h2c_dsc_byp_ctl[15:8] <= wr_data[15:8];
+                    end
+                    6'h06: if (wr_strb[0] && wr_data[0]) h2c_go_pending <= 1'b1;  // GO
                     6'h07: /* status RO */ ;
 
                     // C2H registers (base 0x40)
-                    6'h10: c2h_dsc_byp_src_addr[31:0]  <= wr_data;
-                    6'h11: c2h_dsc_byp_src_addr[63:32] <= wr_data;
-                    6'h12: c2h_dsc_byp_dst_addr[31:0]  <= wr_data;
-                    6'h13: c2h_dsc_byp_dst_addr[63:32] <= wr_data;
-                    6'h14: c2h_dsc_byp_len             <= wr_data[27:0];
-                    6'h15: c2h_dsc_byp_ctl             <= wr_data[15:0];
-                    6'h16: if (wr_data[0]) c2h_go_pending <= 1'b1;  // GO
+                    6'h10: begin
+                        if (wr_strb[0]) c2h_dsc_byp_src_addr[7:0]   <= wr_data[7:0];
+                        if (wr_strb[1]) c2h_dsc_byp_src_addr[15:8]  <= wr_data[15:8];
+                        if (wr_strb[2]) c2h_dsc_byp_src_addr[23:16] <= wr_data[23:16];
+                        if (wr_strb[3]) c2h_dsc_byp_src_addr[31:24] <= wr_data[31:24];
+                    end
+                    6'h11: begin
+                        if (wr_strb[0]) c2h_dsc_byp_src_addr[39:32] <= wr_data[7:0];
+                        if (wr_strb[1]) c2h_dsc_byp_src_addr[47:40] <= wr_data[15:8];
+                        if (wr_strb[2]) c2h_dsc_byp_src_addr[55:48] <= wr_data[23:16];
+                        if (wr_strb[3]) c2h_dsc_byp_src_addr[63:56] <= wr_data[31:24];
+                    end
+                    6'h12: begin
+                        if (wr_strb[0]) c2h_dsc_byp_dst_addr[7:0]   <= wr_data[7:0];
+                        if (wr_strb[1]) c2h_dsc_byp_dst_addr[15:8]  <= wr_data[15:8];
+                        if (wr_strb[2]) c2h_dsc_byp_dst_addr[23:16] <= wr_data[23:16];
+                        if (wr_strb[3]) c2h_dsc_byp_dst_addr[31:24] <= wr_data[31:24];
+                    end
+                    6'h13: begin
+                        if (wr_strb[0]) c2h_dsc_byp_dst_addr[39:32] <= wr_data[7:0];
+                        if (wr_strb[1]) c2h_dsc_byp_dst_addr[47:40] <= wr_data[15:8];
+                        if (wr_strb[2]) c2h_dsc_byp_dst_addr[55:48] <= wr_data[23:16];
+                        if (wr_strb[3]) c2h_dsc_byp_dst_addr[63:56] <= wr_data[31:24];
+                    end
+                    6'h14: begin
+                        if (wr_strb[0]) c2h_dsc_byp_len[7:0]   <= wr_data[7:0];
+                        if (wr_strb[1]) c2h_dsc_byp_len[15:8]  <= wr_data[15:8];
+                        if (wr_strb[2]) c2h_dsc_byp_len[23:16] <= wr_data[23:16];
+                        if (wr_strb[3]) c2h_dsc_byp_len[27:24] <= wr_data[27:24];
+                    end
+                    6'h15: begin
+                        if (wr_strb[0]) c2h_dsc_byp_ctl[7:0]  <= wr_data[7:0];
+                        if (wr_strb[1]) c2h_dsc_byp_ctl[15:8] <= wr_data[15:8];
+                    end
+                    6'h16: if (wr_strb[0] && wr_data[0]) c2h_go_pending <= 1'b1;  // GO
                     6'h17: /* status RO */ ;
 
                     default: ; // unmapped — ignore
@@ -238,5 +299,36 @@ module descriptor_bypass_wrapper_core (
             end
         end
     end
+
+    // ----------------------------------------------------------------
+    // Simulation monitors — one directive per descriptor bypass signal
+    // ----------------------------------------------------------------
+    // synthesis translate_off
+    always @(h2c_dsc_byp_ready)
+        $display("[%0t] h2c_dsc_byp_ready    = %b",    $time, h2c_dsc_byp_ready);
+    always @(h2c_dsc_byp_load)
+        $display("[%0t] h2c_dsc_byp_load     = %b",    $time, h2c_dsc_byp_load);
+    always @(h2c_dsc_byp_src_addr)
+        $display("[%0t] h2c_dsc_byp_src_addr = %h", $time, h2c_dsc_byp_src_addr);
+    always @(h2c_dsc_byp_dst_addr)
+        $display("[%0t] h2c_dsc_byp_dst_addr = %h", $time, h2c_dsc_byp_dst_addr);
+    always @(h2c_dsc_byp_len)
+        $display("[%0t] h2c_dsc_byp_len      = %0d",   $time, h2c_dsc_byp_len);
+    always @(h2c_dsc_byp_ctl)
+        $display("[%0t] h2c_dsc_byp_ctl      = %04h",  $time, h2c_dsc_byp_ctl);
+
+    always @(c2h_dsc_byp_ready)
+        $display("[%0t] c2h_dsc_byp_ready    = %b",    $time, c2h_dsc_byp_ready);
+    always @(c2h_dsc_byp_load)
+        $display("[%0t] c2h_dsc_byp_load     = %b",    $time, c2h_dsc_byp_load);
+    always @(c2h_dsc_byp_src_addr)
+        $display("[%0t] c2h_dsc_byp_src_addr = %h", $time, c2h_dsc_byp_src_addr);
+    always @(c2h_dsc_byp_dst_addr)
+        $display("[%0t] c2h_dsc_byp_dst_addr = %h", $time, c2h_dsc_byp_dst_addr);
+    always @(c2h_dsc_byp_len)
+        $display("[%0t] c2h_dsc_byp_len      = %0d",   $time, c2h_dsc_byp_len);
+    always @(c2h_dsc_byp_ctl)
+        $display("[%0t] c2h_dsc_byp_ctl      = %04h",  $time, c2h_dsc_byp_ctl);
+    // synthesis translate_on
 
 endmodule

@@ -52,6 +52,27 @@ static void check(const std::string &name, uint64_t got, uint64_t exp) {
 // ----------------------------------------------------------------
 // AXI-Lite helpers
 // ----------------------------------------------------------------
+static void axil_write_strb(uint32_t addr, uint32_t data, uint8_t strb) {
+    dut->s_axil_awaddr  = addr;
+    dut->s_axil_awvalid = 1;
+    dut->s_axil_wdata   = data;
+    dut->s_axil_wstrb   = strb;
+    dut->s_axil_wvalid  = 1;
+    dut->s_axil_bready  = 1;
+
+    bool aw_done = false, w_done = false;
+    for (int guard = 0; guard < 100; ++guard) {
+        if (!aw_done && dut->s_axil_awready) aw_done = true;
+        if (!w_done  && dut->s_axil_wready)  w_done  = true;
+        tick();
+        if (aw_done) dut->s_axil_awvalid = 0;
+        if (w_done)  dut->s_axil_wvalid  = 0;
+        if (aw_done && w_done && dut->s_axil_bvalid) break;
+    }
+    tick();
+    dut->s_axil_bready = 0;
+}
+
 static void axil_write(uint32_t addr, uint32_t data) {
     dut->s_axil_awaddr  = addr;
     dut->s_axil_awvalid = 1;
@@ -247,19 +268,68 @@ int main(int argc, char **argv) {
     // ================================================================
     std::cout << "--- Test 9: Unmapped address reads back 0 ---\n";
     // ================================================================
-    check("rd unmapped 0x18", axil_read(0x18), 0x00000000);
     check("rd unmapped 0x1C", axil_read(0x1C), 0x00000000);
 
     // ================================================================
-    std::cout << "--- Test 10: All registers independent ---\n";
+    std::cout << "--- Test 10: ctrl register (0x18) ---\n";
+    // ================================================================
+    // After reset: ready=1, c2h=0, go=0
+    check("ctrl reset state", axil_read(0x18), 0x00000001);
+
+    // Set c2h=1, keep ready=1 → {go=0, c2h=1, ready=1} = 0x3
+    axil_write(0x18, 0x00000003);
+    check("ctrl c2h=1", axil_read(0x18), 0x00000003);
+
+    // Set go=1 → {go=1, c2h=1, ready=1} = 0x7
+    axil_write(0x18, 0x00000007);
+    check("ctrl go=1", axil_read(0x18), 0x00000007);
+
+    // Clear ready (mark busy), clear go → {go=0, c2h=1, ready=0} = 0x2
+    axil_write(0x18, 0x00000002);
+    check("ctrl busy", axil_read(0x18), 0x00000002);
+
+    // Write all zeros
+    axil_write(0x18, 0x00000000);
+    check("ctrl all-zero", axil_read(0x18), 0x00000000);
+
+    // ================================================================
+    std::cout << "--- Test 11: All registers independent ---\n";
     // ================================================================
     axil_write(0x00, 0x00000001); axil_write(0x04, 0x00000002);
     axil_write(0x08, 0x00000003); axil_write(0x0C, 0x00000004);
     axil_write(0x10, 0x00000005); axil_write(0x14, 0x00000006);
+    axil_write(0x18, 0x00000007);
 
     check("host_addr", axil_read64(0x00), 0x0000000200000001ULL);
     check("card_addr", axil_read64(0x08), 0x0000000400000003ULL);
     check("len",       axil_read64(0x10), 0x0000000600000005ULL);
+    check("ctrl",      axil_read(0x18),   0x00000007);
+
+    // ================================================================
+    std::cout << "--- Test 12: Write strobe — byte-lane masking ---\n";
+    // ================================================================
+    // Seed host_addr_lo with a known full-word value
+    axil_write(0x00, 0xAABBCCDD);
+    check("strobe seed",           axil_read(0x00), 0xAABBCCDD);
+
+    // strb=0x1: only byte 0 (bits 7:0) updated
+    axil_write_strb(0x00, 0x11223344, 0x1);
+    check("strb=0x1 byte0 only",   axil_read(0x00), 0xAABBCC44);
+
+    // strb=0xC: only bytes 2-3 (bits 31:16) updated
+    axil_write_strb(0x00, 0x55667788, 0xC);
+    check("strb=0xC bytes2-3 only", axil_read(0x00), 0x5566CC44);
+
+    // strb=0x6: only bytes 1-2 (bits 23:8) updated
+    axil_write_strb(0x00, 0xFFFFFFFF, 0x6);
+    check("strb=0x6 bytes1-2 only", axil_read(0x00), 0x55FFFF44);
+
+    // strb=0xF: full word write restores known value
+    axil_write_strb(0x00, 0x12345678, 0xF);
+    check("strb=0xF full word",     axil_read(0x00), 0x12345678);
+
+    // Verify an adjacent register is unaffected throughout
+    check("host_addr_hi untouched", axil_read(0x04), 0x00000002);
 
     // ================================================================
     std::cout << "--- Summary ---\n";
