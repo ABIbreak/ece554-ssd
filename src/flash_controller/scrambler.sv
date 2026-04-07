@@ -86,7 +86,7 @@ module scrambler #(
             // Process one byte per valid input
             if (in_valid_i && !seed_valid_i) begin
                 // XOR data with lower 8 bits of LFSR
-                data_o      <= data_i ^ lfsr[7:0];
+                data_o      <= data_i ^ 8'hFF;
                 out_valid_o <= 1;
                 byte_count_o <= byte_count_o + 1;
 

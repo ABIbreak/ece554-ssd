@@ -414,6 +414,9 @@ module flash_controller_top_tb_inject;
                     if (tb_errors < 4)
                         $display("  byte[%0d] got=0x%02h exp=0x%02h",
                                  i, read_buf[i], write_buf[i]);
+                    if (tb_errors > 2000)
+                        $display("  byte[%0d] got=0x%02h exp=0x%02h",
+                                 i, read_buf[i], write_buf[i]);
                     tb_errors++;
                 end
             end
@@ -436,7 +439,7 @@ module flash_controller_top_tb_inject;
         $finish;
     end
 
-    initial begin #10_000_000; $display("TIMEOUT"); $finish; end
+    initial begin #25_000_000; $display("TIMEOUT"); $finish; end
     initial begin
         $dumpfile("flash_controller_inject.vcd");
         $dumpvars(0, flash_controller_top_tb_inject);

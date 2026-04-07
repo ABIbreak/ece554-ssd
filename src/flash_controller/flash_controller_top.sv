@@ -108,6 +108,7 @@ module flash_controller_top #(
     logic        fsm_busy;
     logic        fsm_done;
     logic        fsm_fail;
+    logic        fsm_data_req;
     logic [7:0]  fsm_status_byte;
 
     // Write path: deserializer → write FIFO → scrambler → FSM
@@ -272,7 +273,7 @@ module flash_controller_top #(
     // Write FIFO → scrambler
     // Pull from FIFO when scrambler can accept (always ready
     // since scrambler is purely registered with no stall)
-    assign wr_fifo_rd_en = !wr_fifo_empty && !fsm_busy;
+    assign wr_fifo_rd_en = !wr_fifo_empty && fsm_data_req;
 
     // Scrambler output → FSM write data
     assign fsm_data_in = sc_data_out;
@@ -354,6 +355,7 @@ module flash_controller_top #(
         .done_o      (fsm_done),
         .status_o    (fsm_status_byte),
         .fail_o      (fsm_fail),
+        .data_req_o  (fsm_data_req),
         .nand_ce_n   (nand_ce_n),
         .nand_re_n   (nand_re_n),
         .nand_we_n   (nand_we_n),

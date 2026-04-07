@@ -20,6 +20,10 @@
 //   done_o       — single-cycle pulse on operation complete
 //   status_o     — last status register read from chip
 //   fail_o       — SR[0] from last status read (program/erase fail)
+//   data_req_o   — high when FSM is in S_PROG_DATA_WRITE and ready
+//                  for next byte. Used by top level to gate FIFO read.
+//                  Specifically: high when in data write state AND
+//                  WE# is not currently low (i.e. not mid-pulse)
 //
 // NAND geometry (MX30LF1G28AD):
 //   Page:  2112 bytes (2048 data + 64 OOB)
@@ -37,8 +41,8 @@
 // ============================================================
 
 module flash_channel #(
-    parameter CLK_PERIOD_NS = 10,    // system clock period — used to count timing
-    parameter PAGE_BYTES    = 2112,  // 2048 data + 64 OOB
+    parameter CLK_PERIOD_NS = 10,
+    parameter PAGE_BYTES    = 2112,
     parameter COL_BITS      = 12,
     parameter ROW_BITS      = 24
 )(
@@ -53,17 +57,21 @@ module flash_channel #(
 
     // Write data feed (for PROGRAM)
     input  logic [7:0]            data_i,
-    input  logic                  data_wr_i,   // pulse for each byte to program
+    input  logic                  data_wr_i,
 
     // Read data output (for READ)
     output logic [7:0]            data_o,
-    output logic                  data_rd_o,   // high for one cycle per valid byte
+    output logic                  data_rd_o,
 
     // Status
     output logic                  busy_o,
     output logic                  done_o,
     output logic [7:0]            status_o,
     output logic                  fail_o,
+
+    // Data request — high when FSM wants next write byte
+    // Top level uses this to gate FIFO read + scrambler
+    output logic                  data_req_o,
 
     // ---- NAND Flash physical interface -------------------
     output logic                  nand_ce_n,
@@ -72,7 +80,7 @@ module flash_channel #(
     output logic                  nand_cle,
     output logic                  nand_ale,
     output logic                  nand_wp_n,
-    input  logic                  nand_ryby_n,  // R/B# — low = busy
+    input  logic                  nand_ryby_n,
     inout  wire  [7:0]            nand_io
 );
 
@@ -98,39 +106,28 @@ module flash_channel #(
     localparam CMD_RESET  = 8'hFF;
 
     // -------------------------------------------------------
-    // Timing — clock cycles derived from datasheet ns values
-    // All times rounded up to nearest cycle
+    // Timing parameters (clock cycles)
     // -------------------------------------------------------
-    localparam TWB_CYC   = (100  + CLK_PERIOD_NS - 1) / CLK_PERIOD_NS; // WE# high to busy
-    localparam TADL_CYC  = (70   + CLK_PERIOD_NS - 1) / CLK_PERIOD_NS; // addr to data
-    localparam TWHR_CYC  = (60   + CLK_PERIOD_NS - 1) / CLK_PERIOD_NS; // WE# high to RE# low
-    localparam TRHW_CYC  = (60   + CLK_PERIOD_NS - 1) / CLK_PERIOD_NS; // RE# high to WE# low
-    localparam TWP_CYC   = (10   + CLK_PERIOD_NS - 1) / CLK_PERIOD_NS; // WE# pulse width
-    localparam TRP_CYC   = (10   + CLK_PERIOD_NS - 1) / CLK_PERIOD_NS; // RE# pulse width
-    localparam TREA_CYC  = (16   + CLK_PERIOD_NS - 1) / CLK_PERIOD_NS; // RE# access time
+    localparam TWB_CYC  = (100 + CLK_PERIOD_NS - 1) / CLK_PERIOD_NS;
+    localparam TADL_CYC = (70  + CLK_PERIOD_NS - 1) / CLK_PERIOD_NS;
+    localparam TWHR_CYC = (60  + CLK_PERIOD_NS - 1) / CLK_PERIOD_NS;
+    localparam TWP_CYC  = (10  + CLK_PERIOD_NS - 1) / CLK_PERIOD_NS;
+    localparam TRP_CYC  = (10  + CLK_PERIOD_NS - 1) / CLK_PERIOD_NS;
+    localparam TREA_CYC = (16  + CLK_PERIOD_NS - 1) / CLK_PERIOD_NS;
 
     // -------------------------------------------------------
     // State machine
     // -------------------------------------------------------
     typedef enum logic [4:0] {
         S_IDLE,
-        // Shared write-command state
         S_CMD_WRITE,
-        // Address cycles
         S_ADDR_COL0, S_ADDR_COL1,
         S_ADDR_ROW0, S_ADDR_ROW1, S_ADDR_ROW2,
-        // Read flow
         S_READ_CMD2, S_READ_WAIT, S_READ_DATA, S_READ_DATA_HOLD,
-        // Program flow
-        S_PROG_WAIT_DATA, S_PROG_DATA_WRITE, S_PROG_CMD2,
-        S_PROG_WAIT,
-        // Erase flow
+        S_PROG_WAIT_DATA, S_PROG_DATA_WRITE, S_PROG_CMD2, S_PROG_WAIT,
         S_ERASE_CMD2, S_ERASE_WAIT,
-        // Status flow
         S_STATUS_TWHR, S_STATUS_READ,
-        // Reset flow
         S_RESET_WAIT,
-        // Common done
         S_DONE
     } state_t;
 
@@ -140,7 +137,7 @@ module flash_channel #(
     // IO bus control
     // -------------------------------------------------------
     logic [7:0] io_out;
-    logic       io_oe;    // 1 = drive bus, 0 = tristate (read)
+    logic       io_oe;
 
     assign nand_io = io_oe ? io_out : 8'bz;
 
@@ -150,36 +147,43 @@ module flash_channel #(
     logic [2:0]          op_type_r;
     logic [ROW_BITS-1:0] row_addr_r;
     logic [COL_BITS-1:0] col_addr_r;
-    logic [15:0]         timer;        // general wait counter
-    logic [12:0]         byte_cnt;     // bytes read/written in data phase
+    logic [15:0]         timer;
+    logic [12:0]         byte_cnt;
 
     // -------------------------------------------------------
-    // Combinational defaults — overridden in state transitions
+    // data_req_o — combinational
+    // High when FSM is in S_PROG_DATA_WRITE and WE# is idle
+    // (not mid-pulse). This tells the top level to read the
+    // next byte from the FIFO through the scrambler.
+    // -------------------------------------------------------
+    assign data_req_o = (state == S_PROG_DATA_WRITE) && nand_we_n && !data_wr_i;
+
+    // -------------------------------------------------------
+    // FSM
     // -------------------------------------------------------
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            state       <= S_IDLE;
-            nand_ce_n   <= 1;
-            nand_re_n   <= 1;
-            nand_we_n   <= 1;
-            nand_cle    <= 0;
-            nand_ale    <= 0;
-            nand_wp_n   <= 1;
-            io_out      <= '0;
-            io_oe       <= 0;
-            busy_o      <= 0;
-            done_o      <= 0;
-            data_o      <= '0;
-            data_rd_o   <= 0;
-            status_o    <= '0;
-            fail_o      <= 0;
-            op_type_r   <= '0;
-            row_addr_r  <= '0;
-            col_addr_r  <= '0;
-            timer       <= '0;
-            byte_cnt    <= '0;
+            state      <= S_IDLE;
+            nand_ce_n  <= 1;
+            nand_re_n  <= 1;
+            nand_we_n  <= 1;
+            nand_cle   <= 0;
+            nand_ale   <= 0;
+            nand_wp_n  <= 1;
+            io_out     <= '0;
+            io_oe      <= 0;
+            busy_o     <= 0;
+            done_o     <= 0;
+            data_o     <= '0;
+            data_rd_o  <= 0;
+            status_o   <= '0;
+            fail_o     <= 0;
+            op_type_r  <= '0;
+            row_addr_r <= '0;
+            col_addr_r <= '0;
+            timer      <= '0;
+            byte_cnt   <= '0;
         end else begin
-            // Default: clear single-cycle pulses
             done_o    <= 0;
             data_rd_o <= 0;
 
@@ -196,14 +200,12 @@ module flash_channel #(
                         row_addr_r <= row_addr_i;
                         col_addr_r <= col_addr_i;
                         busy_o     <= 1;
-                        nand_ce_n  <= 0;   // assert CE# for entire transaction
-                        nand_wp_n  <= 1;   // write protect off
-
-                        // All ops start by sending a command byte
-                        io_oe  <= 1;
-                        nand_cle <= 1;
-                        nand_ale <= 0;
-                        nand_we_n <= 0;    // WE# low — latch on rising edge
+                        nand_ce_n  <= 0;
+                        nand_wp_n  <= 1;
+                        io_oe      <= 1;
+                        nand_cle   <= 1;
+                        nand_ale   <= 0;
+                        nand_we_n  <= 0;
 
                         case (op_type_i)
                             OP_RESET:  io_out <= CMD_RESET;
@@ -220,44 +222,38 @@ module flash_channel #(
                 end
 
                 // ============================================
-                // Pulse WE# high to latch command, then route
-                // ============================================
                 S_CMD_WRITE: begin
                     if (timer > 0) begin
                         timer <= timer - 1;
                     end else begin
-                        nand_we_n <= 1;    // rising edge latches command
+                        nand_we_n <= 1;
                         nand_cle  <= 0;
                         io_oe     <= 0;
 
                         case (op_type_r)
                             OP_RESET: begin
-                                // Wait for R/B# to go high
                                 timer <= TWB_CYC;
                                 state <= S_RESET_WAIT;
                             end
                             OP_STATUS: begin
-                                // Twhr before RE#
                                 timer <= TWHR_CYC;
                                 state <= S_STATUS_TWHR;
                             end
                             OP_READ, OP_PROG: begin
-                                // Need 5 address cycles (2 col + 3 row)
-                                nand_ale <= 1;
+                                nand_ale  <= 1;
                                 nand_we_n <= 0;
-                                io_oe    <= 1;
-                                io_out   <= col_addr_r[7:0];
-                                timer    <= TWP_CYC;
-                                state    <= S_ADDR_COL0;
+                                io_oe     <= 1;
+                                io_out    <= col_addr_r[7:0];
+                                timer     <= TWP_CYC;
+                                state     <= S_ADDR_COL0;
                             end
                             OP_ERASE: begin
-                                // Only 3 row address cycles, no column
-                                nand_ale <= 1;
+                                nand_ale  <= 1;
                                 nand_we_n <= 0;
-                                io_oe    <= 1;
-                                io_out   <= row_addr_r[7:0];
-                                timer    <= TWP_CYC;
-                                state    <= S_ADDR_ROW0;
+                                io_oe     <= 1;
+                                io_out    <= row_addr_r[7:0];
+                                timer     <= TWP_CYC;
+                                state     <= S_ADDR_ROW0;
                             end
                             default: state <= S_IDLE;
                         endcase
@@ -265,13 +261,13 @@ module flash_channel #(
                 end
 
                 // ============================================
-                // Address cycles — column
+                // Address cycles
                 // ============================================
                 S_ADDR_COL0: begin
                     if (timer > 0) begin
                         timer <= timer - 1;
                     end else begin
-                        nand_we_n <= 1;           // latch CA0
+                        nand_we_n <= 1;
                         io_out    <= {4'h0, col_addr_r[11:8]};
                         timer     <= TWP_CYC;
                         state     <= S_ADDR_COL1;
@@ -283,7 +279,7 @@ module flash_channel #(
                     if (timer > 0) begin
                         timer <= timer - 1;
                     end else begin
-                        nand_we_n <= 1;           // latch CA1
+                        nand_we_n <= 1;
                         io_out    <= row_addr_r[7:0];
                         timer     <= TWP_CYC;
                         state     <= S_ADDR_ROW0;
@@ -291,9 +287,6 @@ module flash_channel #(
                     end
                 end
 
-                // ============================================
-                // Address cycles — row (shared by read/prog/erase)
-                // ============================================
                 S_ADDR_ROW0: begin
                     if (timer > 0) begin
                         timer <= timer - 1;
@@ -328,7 +321,6 @@ module flash_channel #(
 
                         case (op_type_r)
                             OP_READ: begin
-                                // Send READ confirm command (0x30)
                                 nand_cle  <= 1;
                                 nand_we_n <= 0;
                                 io_oe     <= 1;
@@ -337,13 +329,11 @@ module flash_channel #(
                                 state     <= S_READ_CMD2;
                             end
                             OP_PROG: begin
-                                // Wait for data to be fed in
-                                byte_cnt  <= 0;
-                                timer     <= TADL_CYC;  // tADL before data
-                                state     <= S_PROG_WAIT_DATA;
+                                byte_cnt <= 0;
+                                timer    <= TADL_CYC;
+                                state    <= S_PROG_WAIT_DATA;
                             end
                             OP_ERASE: begin
-                                // Send ERASE confirm command (0xD0)
                                 nand_cle  <= 1;
                                 nand_we_n <= 0;
                                 io_oe     <= 1;
@@ -366,18 +356,15 @@ module flash_channel #(
                         nand_we_n <= 1;
                         nand_cle  <= 0;
                         io_oe     <= 0;
-                        // Wait for R/B# to go high (chip is loading page)
                         state     <= S_READ_WAIT;
                     end
                 end
 
                 S_READ_WAIT: begin
-                    // Poll R/B# — nand_ryby_n goes high when ready
                     if (nand_ryby_n) begin
-                        // Start reading — assert RE# low
                         byte_cnt  <= 0;
                         nand_re_n <= 0;
-                        timer     <= TREA_CYC;    // wait Trea before data valid
+                        timer     <= TREA_CYC;
                         state     <= S_READ_DATA;
                     end
                 end
@@ -386,12 +373,11 @@ module flash_channel #(
                     if (timer > 0) begin
                         timer <= timer - 1;
                     end else begin
-                        // Data is valid — sample IO bus
                         data_o    <= nand_io;
                         data_rd_o <= 1;
-                        nand_re_n <= 1;           // RE# high — releases bus
+                        nand_re_n <= 1;
                         byte_cnt  <= byte_cnt + 1;
-                        timer     <= TRP_CYC;     // hold RE# high before next
+                        timer     <= TRP_CYC;
                         state     <= S_READ_DATA_HOLD;
                     end
                 end
@@ -403,7 +389,6 @@ module flash_channel #(
                         if (byte_cnt >= PAGE_BYTES) begin
                             state <= S_DONE;
                         end else begin
-                            // Next byte
                             nand_re_n <= 0;
                             timer     <= TREA_CYC;
                             state     <= S_READ_DATA;
@@ -415,36 +400,45 @@ module flash_channel #(
                 // PROGRAM flow
                 // ============================================
                 S_PROG_WAIT_DATA: begin
-                    // tADL delay after last address cycle
+                    // tADL delay — wait before accepting data
                     if (timer > 0) begin
                         timer <= timer - 1;
                     end else begin
-                        state <= S_PROG_DATA_WRITE;
-                        io_oe <= 1;
+                        // tADL done — enter data write state
+                        // data_req_o goes high combinationally from here
+                        byte_cnt <= 0;
+                        io_oe    <= 1;
+                        state    <= S_PROG_DATA_WRITE;
                     end
                 end
 
                 S_PROG_DATA_WRITE: begin
-                    // Accept one byte per cycle when data_wr_i is pulsed
+                    // data_req_o is combinational — high when we_n is idle
+                    // Top level: sees data_req_o → reads FIFO → scrambles
+                    //            → asserts data_wr_i with data_i
+
                     if (data_wr_i) begin
+                        // Latch incoming byte and start WE# pulse
                         io_out    <= data_i;
                         nand_we_n <= 0;
                         timer     <= TWP_CYC;
                         byte_cnt  <= byte_cnt + 1;
                     end else if (!nand_we_n) begin
+                        // Mid WE# pulse — count down
                         if (timer > 0)
                             timer <= timer - 1;
                         else
-                            nand_we_n <= 1;
+                            nand_we_n <= 1;   // raise WE# — chip latches byte
                     end else if (byte_cnt >= PAGE_BYTES) begin
-                        // All bytes written — send program confirm
-                        io_oe     <= 1;
+                        // All bytes written — send program confirm command
                         nand_cle  <= 1;
                         nand_we_n <= 0;
                         io_out    <= CMD_PROG2;
                         timer     <= TWP_CYC;
                         state     <= S_PROG_CMD2;
                     end
+                    // else: idle, waiting for next data_wr_i pulse
+                    // data_req_o stays high → top level will feed next byte
                 end
 
                 S_PROG_CMD2: begin
@@ -459,7 +453,6 @@ module flash_channel #(
                 end
 
                 S_PROG_WAIT: begin
-                    // Wait for R/B# to go high
                     if (nand_ryby_n) begin
                         state <= S_DONE;
                     end
@@ -489,7 +482,6 @@ module flash_channel #(
                 // STATUS READ flow
                 // ============================================
                 S_STATUS_TWHR: begin
-                    // Twhr gap between WE# and RE#
                     if (timer > 0) begin
                         timer <= timer - 1;
                     end else begin
@@ -504,7 +496,7 @@ module flash_channel #(
                         timer <= timer - 1;
                     end else begin
                         status_o  <= nand_io;
-                        fail_o    <= nand_io[0];   // SR[0] = pass/fail
+                        fail_o    <= nand_io[0];
                         nand_re_n <= 1;
                         state     <= S_DONE;
                     end
@@ -527,7 +519,7 @@ module flash_channel #(
                 S_DONE: begin
                     done_o    <= 1;
                     busy_o    <= 0;
-                    nand_ce_n <= 1;    // deassert CE# between transactions
+                    nand_ce_n <= 1;
                     nand_re_n <= 1;
                     nand_we_n <= 1;
                     io_oe     <= 0;
