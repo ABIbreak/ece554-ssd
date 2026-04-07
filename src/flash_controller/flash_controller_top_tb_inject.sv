@@ -2,24 +2,6 @@
 // flash_controller_top_tb_inject.sv
 // Injected signal testbench — no real flash model
 // ============================================================
-// All NAND signals are driven by the testbench directly.
-// This lets you test the full data path (AXI-S → deserializer
-// → FIFO → scrambler → FSM → descrambler → FIFO → serializer)
-// without waiting for real flash timing (ms erase, µs program).
-//
-// The testbench acts as a fake flash chip:
-//   - Monitors nand_cle/ale/we_n to detect commands/addresses
-//   - Drives nand_ryby_n low then high to simulate busy/ready
-//   - Drives nand_io with known data during read cycles
-//
-// Tests:
-//   1. AXI-Lite register read/write
-//   2. Write path: AXI-S → through pipeline → fake flash write
-//   3. Read path:  fake flash read → through pipeline → AXI-S
-//   4. Round trip: write then read back, verify data matches
-//   5. Scrambling: verify data on NAND bus differs from input
-// ============================================================
-
 `timescale 1ns/1ps
 
 `include "flash_controller_top.sv"
@@ -59,7 +41,6 @@ module flash_controller_top_tb_inject;
     // -------------------------------------------------------
     // DUT signals
     // -------------------------------------------------------
-    // AXI-Lite
     logic [4:0]  axil_awaddr;  logic axil_awvalid; logic axil_awready;
     logic [31:0] axil_wdata;   logic [3:0] axil_wstrb;
     logic        axil_wvalid;  logic axil_wready;
@@ -68,21 +49,17 @@ module flash_controller_top_tb_inject;
     logic [31:0] axil_rdata;   logic [1:0] axil_rresp;
     logic        axil_rvalid;  logic axil_rready;
 
-    // AXI-Stream write (TB drives this)
     logic [31:0] s_axis_tdata;  logic s_axis_tvalid;
     logic        s_axis_tready; logic s_axis_tlast;
 
-    // AXI-Stream read (TB receives this)
     logic [31:0] m_axis_tdata;  logic m_axis_tvalid;
     logic        m_axis_tready; logic m_axis_tlast;
 
-    // NAND physical (TB acts as fake flash)
     logic        nand_ce_n, nand_re_n, nand_we_n;
     logic        nand_cle, nand_ale, nand_wp_n;
     logic        nand_ryby_n;
     wire  [7:0]  nand_io;
 
-    // TB drives nand_io during reads
     logic [7:0]  nand_io_drive;
     logic        nand_io_oe;
     assign nand_io = nand_io_oe ? nand_io_drive : 8'bz;
@@ -121,12 +98,13 @@ module flash_controller_top_tb_inject;
     int fail_count = 0;
 
     task automatic check(input string n, input logic [31:0] g, input logic [31:0] e);
-        if (g === e) begin $display("  PASS  %s", n); pass_count++; end
-        else begin $display("  FAIL  %s | got=0x%08h exp=0x%08h", n, g, e); fail_count++; end
+        if (g === e) begin $display("[%0t]  PASS  %s", $time, n); pass_count++; end
+        else begin $display("[%0t]  FAIL  %s | got=0x%08h exp=0x%08h", $time, n, g, e); fail_count++; end
     endtask
+
     task automatic check_flag(input string n, input logic g, input logic e);
-        if (g === e) begin $display("  PASS  %s", n); pass_count++; end
-        else begin $display("  FAIL  %s | got=%0b exp=%0b", n, g, e); fail_count++; end
+        if (g === e) begin $display("[%0t]  PASS  %s", $time, n); pass_count++; end
+        else begin $display("[%0t]  FAIL  %s | got=%0b exp=%0b", $time, n, g, e); fail_count++; end
     endtask
 
     // -------------------------------------------------------
@@ -177,13 +155,12 @@ module flash_controller_top_tb_inject;
     endtask
 
     // -------------------------------------------------------
-    // Fake flash — responds to NAND signals
+    // Fake flash
     // -------------------------------------------------------
-    logic [7:0] fake_flash_mem [0:PAGE_BYTES-1];  // fake page storage
-    logic [7:0] nand_io_cap    [0:PAGE_BYTES-1];  // captured write bytes
+    logic [7:0] fake_flash_mem [0:PAGE_BYTES-1];
+    logic [7:0] nand_io_cap    [0:PAGE_BYTES-1];
 
-    // Captures bytes written to the fake flash on WE# rising edges
-    int wr_capture_idx = 0;
+    int   wr_capture_idx = 0;
     logic capturing_write = 0;
 
     always @(posedge nand_we_n) begin
@@ -195,31 +172,41 @@ module flash_controller_top_tb_inject;
         end
     end
 
-    // Fake flash R/B# and read data — driven by tasks below
-    initial nand_ryby_n = 1;
-    initial nand_io_oe  = 0;
+    initial nand_ryby_n  = 1;
+    initial nand_io_oe   = 0;
     initial nand_io_drive = 0;
 
-    // Task: simulate flash busy then ready
     task automatic fake_busy(input int busy_ns);
         nand_ryby_n = 0;
         #busy_ns;
         nand_ryby_n = 1;
     endtask
 
-    // Task: drive read data out when RE# is toggled
+    // -------------------------------------------------------
+    // fake_drive_read_data
+    // Pre-loads byte 0 onto the bus BEFORE nand_ryby_n goes
+    // high so data is stable when the FSM first asserts RE#.
+    // Updates on posedge RE# (after channel has sampled).
+    // Call this AFTER setting nand_ryby_n=0 but BEFORE
+    // setting nand_ryby_n=1.
+    // -------------------------------------------------------
     task automatic fake_drive_read_data;
-        int byte_idx = 0;
-        nand_io_oe = 1;
-        while (byte_idx < PAGE_BYTES) begin
-            @(negedge nand_re_n);
-            nand_io_drive = fake_flash_mem[byte_idx++];
+        // Pre-load byte 0 — must be on bus before first RE# negedge
+        nand_io_oe    = 1;
+        nand_io_drive = fake_flash_mem[0];
+
+        for (int i = 0; i < PAGE_BYTES; i++) begin
+            @(negedge nand_re_n);              // FSM dropped RE# low
+            nand_io_drive = fake_flash_mem[i]; // data stable during RE# low
+            @(posedge nand_re_n);              // FSM raised RE# — just sampled
+            if (i + 1 < PAGE_BYTES)
+                nand_io_drive = fake_flash_mem[i + 1]; // pre-load next byte
         end
         nand_io_oe = 0;
     endtask
 
     // -------------------------------------------------------
-    // AXI-Stream write sender (TB → DUT)
+    // AXI-Stream helpers
     // -------------------------------------------------------
     logic [7:0] write_buf [0:PAGE_BYTES-1];
     logic [7:0] read_buf  [0:PAGE_BYTES-1];
@@ -227,7 +214,8 @@ module flash_controller_top_tb_inject;
     task automatic send_axis_page(input logic [7:0] page_buf [0:PAGE_BYTES-1]);
         for (int i = 0; i < PAGE_BEATS; i++) begin
             @(posedge clk);
-            s_axis_tdata  <= {page_buf[i*4+3], page_buf[i*4+2], page_buf[i*4+1], page_buf[i*4]};
+            s_axis_tdata  <= {page_buf[i*4+3], page_buf[i*4+2],
+                              page_buf[i*4+1], page_buf[i*4]};
             s_axis_tvalid <= 1;
             s_axis_tlast  <= (i == PAGE_BEATS-1);
             do @(posedge clk); while (!s_axis_tready);
@@ -236,7 +224,6 @@ module flash_controller_top_tb_inject;
         s_axis_tlast  <= 0;
     endtask
 
-    // AXI-Stream read receiver (DUT → TB)
     int recv_idx = 0;
     always @(posedge clk) begin
         if (m_axis_tvalid && m_axis_tready) begin
@@ -251,15 +238,73 @@ module flash_controller_top_tb_inject;
     end
 
     // -------------------------------------------------------
-    // Main test
+    // DEBUG: trace first 5 bytes through every pipeline stage
+    // Remove after bug is found
     // -------------------------------------------------------
+    int dbg_deser_cnt   = 0;
+    int dbg_wrfifo_cnt  = 0;
+    int dbg_sc_cnt      = 0;
+    int dbg_fsm_rd_cnt  = 0;
+    int dbg_dc_cnt      = 0;
+    int dbg_rdfifo_cnt  = 0;
+
+    always @(posedge clk) begin
+
+        // Stage 1: deserializer → write FIFO
+        if (dut.deser_valid && !dut.wr_fifo_full) begin
+            if (dbg_deser_cnt < 5)
+                $display("[%0t] DESER->WRFIFO   byte[%0d] = 0x%02h",
+                         $time, dbg_deser_cnt, dut.deser_byte);
+            dbg_deser_cnt = dbg_deser_cnt + 1;
+        end
+
+        // Stage 2: write FIFO → scrambler
+        if (dut.wr_fifo_rd_en) begin
+            if (dbg_wrfifo_cnt < 5)
+                $display("[%0t] WRFIFO->SCRAM    byte[%0d] = 0x%02h",
+                         $time, dbg_wrfifo_cnt, dut.wr_fifo_rd_data);
+            dbg_wrfifo_cnt = dbg_wrfifo_cnt + 1;
+        end
+
+        // Stage 3: scrambler → FSM
+        if (dut.sc_out_valid) begin
+            if (dbg_sc_cnt < 5)
+                $display("[%0t] SCRAM->FSM       byte[%0d] = 0x%02h",
+                         $time, dbg_sc_cnt, dut.sc_data_out);
+            dbg_sc_cnt = dbg_sc_cnt + 1;
+        end
+
+        // Stage 4: FSM reads from flash → descrambler
+        if (dut.fsm_rd_valid) begin
+            if (dbg_fsm_rd_cnt < 5)
+                $display("[%0t] FSM_RD->DESCRAM  byte[%0d] = 0x%02h",
+                         $time, dbg_fsm_rd_cnt, dut.fsm_rd_byte);
+            dbg_fsm_rd_cnt = dbg_fsm_rd_cnt + 1;
+        end
+
+        // Stage 5: descrambler → read FIFO
+        if (dut.dc_out_valid) begin
+            if (dbg_dc_cnt < 5)
+                $display("[%0t] DESCRAM->RDFIFO  byte[%0d] = 0x%02h",
+                         $time, dbg_dc_cnt, dut.dc_data_out);
+            dbg_dc_cnt = dbg_dc_cnt + 1;
+        end
+
+        // Stage 6: read FIFO → serializer
+        if (dut.rd_fifo_rd_en) begin
+            if (dbg_rdfifo_cnt < 5)
+                $display("[%0t] RDFIFO->SER      byte[%0d] = 0x%02h",
+                         $time, dbg_rdfifo_cnt, dut.rd_fifo_rd_data);
+            dbg_rdfifo_cnt = dbg_rdfifo_cnt + 1;
+        end
+
+    end
     initial begin
-        // Declarations must come first in Questa 2020
         automatic logic [31:0] tb_status;
         automatic int          tb_errors;
         automatic int          tb_same_count;
 
-        // Init
+        // Init signals
         axil_awvalid=0; axil_wvalid=0; axil_bready=0;
         axil_arvalid=0; axil_rready=0;
         s_axis_tvalid=0; s_axis_tlast=0; s_axis_tdata=0;
@@ -270,18 +315,15 @@ module flash_controller_top_tb_inject;
         rst_n = 1;
         repeat(2) @(posedge clk);
 
-        // Fill write buffer with known pattern
         for (int i = 0; i < PAGE_BYTES; i++)
             write_buf[i] = i[7:0];
-
-        // Fill fake flash with 0xFF (erased state)
         for (int i = 0; i < PAGE_BYTES; i++)
             fake_flash_mem[i] = 8'hFF;
 
         // ================================================
         // TEST 1: AXI-Lite register R/W
         // ================================================
-        $display("\n=== TEST 1: AXI-Lite Register R/W ===");
+        $display("[%0t] === TEST 1: AXI-Lite Register R/W ===", $time);
         begin
             logic [31:0] rd;
             axil_write(ADDR_FLASH_ADDR, 32'h00ABCDEF);
@@ -301,9 +343,9 @@ module flash_controller_top_tb_inject;
         end
 
         // ================================================
-        // TEST 2: Reset operation (injected R/B#)
+        // TEST 2: Reset
         // ================================================
-        $display("\n=== TEST 2: Reset (injected) ===");
+        $display("[%0t] === TEST 2: Reset (injected) ===", $time);
         begin
             fork
                 start_op(OP_RESET, 24'h0, 12'h0, 24'h0);
@@ -314,16 +356,13 @@ module flash_controller_top_tb_inject;
         end
 
         // ================================================
-        // TEST 3: Write path — AXI-S → pipeline → fake flash
-        //         Verify scrambled bytes land on NAND bus
+        // TEST 3: Write path
         // ================================================
-        $display("\n=== TEST 3: Write path with scrambling ===");
+        $display("[%0t] === TEST 3: Write path with scrambling ===", $time);
         begin
             wr_capture_idx  = 0;
             capturing_write = 1;
 
-            // Start program op and send AXI-S data concurrently
-            // (data must be flowing when FSM enters data phase)
             fork : prog_data
                 send_axis_page(write_buf);
                 begin
@@ -331,29 +370,17 @@ module flash_controller_top_tb_inject;
                     start_op(OP_PROG, 24'h000000, 12'h000, 24'h00002A);
                 end
             join_any
-            // Wait for both to finish
             wait fork;
-            // After enough WE# pulses for cmd+addr+data+confirm, go busy then ready.
-            // We use a simple approach: wait for nand_ce_n to go low, then after
-            // a fixed number of WE# pulses (command + 5 addr + page data + confirm)
-            // assert busy briefly then release.
+
             fork : fake_flash_prog
                 begin
-                    // Wait for CE# to assert (transaction starts)
                     @(negedge nand_ce_n);
-                    // Wait for program confirm (0x10) — it comes after
-                    // 1 cmd + 5 addr + PAGE_BYTES data beats + 1 confirm
-                    // Rather than count beats, just wait for CE# to go high
-                    // (FSM deasserts CE# only after done) — use a generous delay
-                    // that covers the address + data phase
-                    #((PAGE_BYTES * 4 * CLK_PERIOD) + 500);  // data phase + margin
-                    // Now assert busy to simulate flash programming
+                    #((PAGE_BYTES * 4 * CLK_PERIOD) + 500);
                     nand_ryby_n = 0;
-                    #5000;   // 5µs fake program time
+                    #5000;
                     nand_ryby_n = 1;
                 end
                 begin
-                    // Safety timeout for this thread
                     #9_000_000;
                 end
             join_any
@@ -363,44 +390,56 @@ module flash_controller_top_tb_inject;
             axil_poll_done(tb_status);
             check("PROG no fail", tb_status & STATUS_FAIL, 32'h0);
 
-            // Verify scrambling — captured bytes should differ from input
             tb_same_count = 0;
             for (int i = 0; i < PAGE_BYTES; i++)
                 if (nand_io_cap[i] === write_buf[i]) tb_same_count++;
             if (tb_same_count < PAGE_BYTES / 4)
-                $display("  PASS  Data was scrambled (%0d/%0d bytes unchanged)",
-                         tb_same_count, PAGE_BYTES);
+                $display("[%0t]  PASS  Data was scrambled (%0d/%0d bytes unchanged)",
+                         $time, tb_same_count, PAGE_BYTES);
             else begin
-                $display("  FAIL  Data appears unscrambled (%0d/%0d same)",
-                         tb_same_count, PAGE_BYTES);
+                $display("[%0t]  FAIL  Data appears unscrambled (%0d/%0d same)",
+                         $time, tb_same_count, PAGE_BYTES);
                 fail_count++;
             end
 
-            // Save scrambled bytes as what flash would store
             for (int i = 0; i < PAGE_BYTES; i++)
                 fake_flash_mem[i] = nand_io_cap[i];
         end
 
         // ================================================
-        // TEST 4: Read path — fake flash → pipeline → AXI-S
+        // TEST 4: Read path with descrambling
         // ================================================
-        $display("\n=== TEST 4: Read path with descrambling ===");
+        $display("[%0t] === TEST 4: Read path with descrambling ===", $time);
         begin
             recv_idx      = 0;
             m_axis_tready = 1;
 
-            // Start the read op
+            // Start read operation
             start_op(OP_READ, 24'h000000, 12'h000, 24'h00002A);
 
-            // Fake flash response: wait for CE# low (FSM started),
-            // then simulate page load busy time, then drive read data
+            // Wait for FSM to assert CE#
             @(negedge nand_ce_n);
-            nand_ryby_n = 0;       // go busy (loading page from array)
-            #2000;                 // 2µs fake page load
-            nand_ryby_n = 1;       // ready — FSM will now start clocking RE#
 
-            // Drive read bytes as RE# toggles
-            fake_drive_read_data();
+            // Simulate page load busy time
+            // Pre-load byte 0 onto bus BEFORE nand_ryby_n goes high
+            // so data is already stable when FSM first drops RE#
+            nand_io_oe    = 1;
+            nand_io_drive = fake_flash_mem[0];  // byte 0 stable now
+            nand_ryby_n   = 0;                  // go busy
+            #2000;                              // fake page load time
+            nand_ryby_n   = 1;                  // release — FSM exits S_READ_WAIT
+
+            // Drive bytes synced to posedge RE# (after channel has sampled)
+            // Byte 0 is already on the bus from pre-load above.
+            // On each posedge RE# the channel has just finished sampling —
+            // we load the next byte while RE# is high so it is stable
+            // before the next negedge RE#.
+            for (int i = 0; i < PAGE_BYTES - 1; i++) begin
+                @(posedge nand_re_n);               // channel just sampled byte i
+                nand_io_drive = fake_flash_mem[i+1]; // load byte i+1 while RE# high
+            end
+            @(posedge nand_re_n);  // wait for last byte to be sampled
+            nand_io_oe = 0;
 
             axil_poll_done(tb_status);
             check("READ no fail", tb_status & STATUS_FAIL, 32'h0);
@@ -412,19 +451,19 @@ module flash_controller_top_tb_inject;
             for (int i = 0; i < PAGE_BYTES; i++) begin
                 if (read_buf[i] !== write_buf[i]) begin
                     if (tb_errors < 4)
-                        $display("  byte[%0d] got=0x%02h exp=0x%02h",
-                                 i, read_buf[i], write_buf[i]);
+                        $display("[%0t]  byte[%0d] got=0x%02h exp=0x%02h",
+                                 $time, i, read_buf[i], write_buf[i]);
                     if (tb_errors > 2000)
-                        $display("  byte[%0d] got=0x%02h exp=0x%02h",
-                                 i, read_buf[i], write_buf[i]);
+                        $display("[%0t]  byte[%0d] got=0x%02h exp=0x%02h",
+                                 $time, i, read_buf[i], write_buf[i]);
                     tb_errors++;
                 end
             end
             if (tb_errors == 0)
-                $display("  PASS  All %0d bytes recovered correctly after descramble",
-                         PAGE_BYTES);
+                $display("[%0t]  PASS  All %0d bytes recovered correctly after descramble",
+                         $time, PAGE_BYTES);
             else begin
-                $display("  FAIL  %0d bytes mismatched after round trip", tb_errors);
+                $display("[%0t]  FAIL  %0d bytes mismatched after round trip", $time, tb_errors);
                 fail_count++;
             end
         end
@@ -433,13 +472,13 @@ module flash_controller_top_tb_inject;
         // Summary
         // ================================================
         repeat(4) @(posedge clk);
-        $display("\n========================================");
-        $display("  Results: %0d passed, %0d failed", pass_count, fail_count);
-        $display("========================================\n");
+        $display("[%0t] ========================================", $time);
+        $display("[%0t]   Results: %0d passed, %0d failed", $time, pass_count, fail_count);
+        $display("[%0t] ========================================", $time);
         $finish;
     end
 
-    initial begin #25_000_000; $display("TIMEOUT"); $finish; end
+    initial begin #25_000_000; $display("[%0t] TIMEOUT", $time); $finish; end
     initial begin
         $dumpfile("flash_controller_inject.vcd");
         $dumpvars(0, flash_controller_top_tb_inject);
