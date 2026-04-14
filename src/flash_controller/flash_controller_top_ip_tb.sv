@@ -228,7 +228,7 @@ module flash_controller_top_ip_tb;
                          $time, dbg_deser_cnt, dut.deser_byte);
             dbg_deser_cnt = dbg_deser_cnt + 1;
         end
-        if (dut.wr_fifo_rd_en) begin
+        if (dut.wr_fifo_rd_en_r) begin
             if (dbg_wrfifo_cnt < 5)
                 $display("[%0t] WRFIFO->SCRAM    byte[%0d] = 0x%02h",
                          $time, dbg_wrfifo_cnt, dut.wr_fifo_rd_data);
@@ -260,6 +260,12 @@ module flash_controller_top_ip_tb;
         end
     end
 
+
+    /*always @(posedge dut.nand_we_n) begin
+        if (!dut.nand_ce_n && !dut.nand_cle && !dut.nand_ale)
+            $display("[%0t] WEN_RISING: io=%02h nand_io=%02h byte_cnt=%0d", 
+                    $time, dut.u_fsm.io_out, dut.nand_io, dut.u_fsm.byte_cnt);
+    end */
     // -------------------------------------------------------
     // Main test
     // -------------------------------------------------------

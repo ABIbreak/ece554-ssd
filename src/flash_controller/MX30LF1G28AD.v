@@ -1214,6 +1214,8 @@ always @ ( posedge WE_B or posedge CE_B ) begin
                                                                 else begin
                                                                         -> page_pgm;
                                                                 end
+                                                                $display("[%0t] MXIC_CACHE: Cache0[0]=%h Cache0[1]=%h Cache0[2]=%h", 
+                                                                         $time, Cache0[0], Cache0[1], Cache0[2]);
                                                                 -> capgm_op_event;
                                                         end
                                                 end
@@ -1909,8 +1911,11 @@ always @ ( page_pgm ) begin: page_pgm_p
                         plane_flag = 1'b0;
                         for ( pa_count = 0; pa_count <= Top_Cache; pa_count = pa_count + 1) begin
                                 PBuff0[pa_count] = Cache0[pa_count];
+                                
                         end
                 end
+                $display("[%0t] MXIC_PBUFF: PBuff0[0]=%h PBuff0[1]=%h protect=%b WP_B=%b",
+                         $time, PBuff0[0], PBuff0[1], block_protect(Latch_A_4TMP), WP_B_IN);
         end
         if ( capgm_op == 1'b1 ) begin
                 sr6 = 1'b1;
@@ -2003,6 +2008,8 @@ always @ ( page_pgm ) begin: page_pgm_p
                                         for ( pa_count = 0; pa_count <= Top_Cache; pa_count = pa_count + 1) begin
                                                 ARRAY[Latch_A_4TMP[A_MSB:0] + pa_count] = PBuff0[pa_count] & ARRAY[Latch_A_4TMP[A_MSB:0] + pa_count];
                                         end
+                                        $display("[%0t] MXIC_ARRAY: ARRAY[0]=%h ARRAY[1]=%h ARRAY[2]=%h",
+                                                 $time, ARRAY[0], ARRAY[1], ARRAY[2]);
                                         sr0_0 = 1'b0;
                                         sr1_0_pre = 1'b0;
                                         sr0 = sr0_0;

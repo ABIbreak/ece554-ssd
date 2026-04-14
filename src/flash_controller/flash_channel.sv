@@ -111,8 +111,19 @@ module flash_channel #(
     logic [15:0]         timer;
     logic [12:0]         byte_cnt;
 
+    logic req_sent;
+
     assign data_req_o = (state == S_PROG_DATA_WRITE) &&
-                         nand_we_n && !data_wr_i && (timer == 0);
+                        nand_we_n && !data_wr_i && (timer == 0) && !req_sent;
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) req_sent <= 0;
+        else begin
+            if (state != S_PROG_DATA_WRITE) req_sent <= 0;
+            else if (data_req_o)            req_sent <= 1;
+            else if (data_wr_i)             req_sent <= 0;
+        end
+    end
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin

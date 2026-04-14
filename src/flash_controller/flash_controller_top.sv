@@ -269,6 +269,16 @@ module flash_controller_top #(
         end
     end
 
+    always_ff @(posedge clk) begin
+    if (reg_start && (reg_operation == 3'd1))
+        $display("[%0t] LATCH RESET: read op start detected", $time);
+    end
+
+    always_ff @(posedge clk) begin
+        if (ser_start)
+            $display("[%0t] SER_START fired: rd_fifo_count=%0d", $time, rd_fifo_count);
+        end
+
     logic read_done_latch;
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) read_done_latch <= 0;
@@ -279,6 +289,11 @@ module flash_controller_top #(
     end
     assign ser_start = (rd_fifo_count >= 4) && (reg_operation == 3'd1) && !ser_started && read_done_latch;
 
+    always_ff @(posedge clk) begin
+    if (reg_start)
+        $display("[%0t] REG_START fired: operation=%0d", $time, reg_operation);
+    end
+
     // -------------------------------------------------------
     // Write path connections
     // -------------------------------------------------------
@@ -288,7 +303,26 @@ module flash_controller_top #(
     // Write FIFO → scrambler
     // Pull from FIFO when scrambler can accept (always ready
     // since scrambler is purely registered with no stall)
+
+/*     always_ff @(posedge clk) begin
+    if (!wr_fifo_empty)
+        $display("[%0t] WR_PATH: fsm_data_req=%b wr_fifo_rd_en=%b wr_fifo_rd_data=%h sc_out_valid=%b sc_data_out=%h fsm_data_wr=%b fsm_data_in=%h",
+                 $time,
+                 fsm_data_req,
+                 wr_fifo_rd_en,
+                 wr_fifo_rd_data,
+                 sc_out_valid,
+                 sc_data_out,
+                 fsm_data_wr,
+                 fsm_data_in);
+    end */
     assign wr_fifo_rd_en = !wr_fifo_empty && fsm_data_req;
+
+    logic wr_fifo_rd_en_r;
+        always_ff @(posedge clk or negedge rst_n) begin
+            if (!rst_n) wr_fifo_rd_en_r <= 0;
+            else        wr_fifo_rd_en_r <= wr_fifo_rd_en;
+        end
 
     // Scrambler output → FSM write data
     assign fsm_data_in = sc_data_out;
@@ -343,7 +377,7 @@ module flash_controller_top #(
         .seed_valid_i (seed_valid),
         .seed_i       (reg_lba),
         .data_i       (wr_fifo_rd_data),
-        .in_valid_i   (wr_fifo_rd_en),
+        .in_valid_i   (wr_fifo_rd_en_r),
         .data_o       (sc_data_out),
         .out_valid_o  (sc_out_valid),
         .byte_count_o ()
