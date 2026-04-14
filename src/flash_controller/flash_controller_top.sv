@@ -136,6 +136,9 @@ module flash_controller_top #(
     logic        rd_fifo_empty;
     logic        rd_fifo_rd_en;
     logic [7:0]  rd_fifo_rd_data;
+    logic [12:0] rd_fifo_count;
+    logic rd_fifo_flush;
+    assign rd_fifo_flush = reg_start && (reg_operation == 3'd1);
 
     logic        ser_start;
     logic        ser_done;
@@ -251,18 +254,30 @@ module flash_controller_top #(
                 s_axil_rvalid <= 0;
         end
     end
-
     // -------------------------------------------------------
     // Serializer start — trigger when read op completes
     // loading the read FIFO
     // -------------------------------------------------------
     // Start serializer one cycle after FSM done on a READ op
-    logic fsm_done_r;
+
+    logic ser_started;
     always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) fsm_done_r <= 0;
-        else        fsm_done_r <= fsm_done;
+        if (!rst_n) ser_started <= 0;
+        else begin
+            if (reg_start && (reg_operation == 3'd1)) ser_started <= 0;
+            else if (ser_start) ser_started <= 1;
+        end
     end
-    assign ser_start = fsm_done_r && (reg_operation == 3'd1); // READ
+
+    logic read_done_latch;
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) read_done_latch <= 0;
+        else begin
+            if (reg_start && (reg_operation == 3'd1)) read_done_latch <= 0;
+            else if (fsm_done && (reg_operation == 3'd1)) read_done_latch <= 1;
+        end
+    end
+    assign ser_start = (rd_fifo_count >= 4) && (reg_operation == 3'd1) && !ser_started && read_done_latch;
 
     // -------------------------------------------------------
     // Write path connections
@@ -396,9 +411,9 @@ module flash_controller_top #(
         .rd_en_i      (rd_fifo_rd_en),
         .rd_data_o    (rd_fifo_rd_data),
         .empty_o      (rd_fifo_empty),
-        .flush_i      (1'b0),
+        .flush_i      (rd_fifo_flush),
         .almost_full_o(),
-        .count_o      (),
+        .count_o      (rd_fifo_count),
         .overflow_o   (),
         .underflow_o  ()
     );
